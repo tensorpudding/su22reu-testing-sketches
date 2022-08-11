@@ -2,27 +2,47 @@ import numpy as np
 import sys
 
 class HashFunction:
-    def __init__(self, p, k, n, m=None, seed=None):
-        self.p = p
+    """
+    Class to represent k-wise independent hash functions.
+    Implemented by analyzing polynomials over a finite field, with coefficients uniformly sampled from the field.
+    By Carter and Wegman (1981), these produce strong universal_k hash functions.
+    This means that for a random hash function onto the set [m], and any set of up to k distinct keys, the probability of a collision is bounded by 1/m^k
+    We assume here that k << m, this does not work well at all otherwise.
+    """
+    def __init__(self, k, n, m, seed=None):
+        """
+        Constructor for hash function.
+        k = k for k-wise independence
+        n = size of input set
+        m = size of output set
+        seed = a seed for the RNG, to allow for deterministic generation (None = random)
+        """
+        # We generate the large modulus that produces our finite field of coefficients.
+        # A finite field requires order of a power of a prime
+        # We set p to be the smallest power of 2 larger than m
+        self.p = 2
+        # We consider the possibility that the hash space is either larger or smaller than the space of keys
+        # The size of the base field must be larger than either
+        x = max(n, m)
+        while (self.p < x):
+            self.p *= 2
         self.k = k
         self.n = n
-        if m:
-            self.m = m
-        else:
-            self.m = n ** 3
+        self.m = m
         assert(self.p > self.m)
         if seed:
             rng = np.random.default_rng(seed=seed)
         else:
             rng = np.random.default_rng()
-        self.cs = rng.integers(0, p, size=self.k)
+        # Here, we generate the random coefficients of our degree k-1 polynomial
+        self.cs = rng.integers(0, self.p, size=self.k)
 
     def eval(self, x):
+        # Evaluate the hash function at x
+        # We assume that x has already been normalized modulo n
         res = self.cs[0]
-        pk = 1
         for i in range(1,self.k):
-            res += self.cs[i] * x ** pk
-            pk += 1
+            res += self.cs[i] * x ** i
             res = res % self.p
         return res % (self.m)
     def get_hash_vals(self):
@@ -36,6 +56,18 @@ class HashFunction:
             sys.exit(2)
         for i in range(len(self.cs)):
             self.cs[i] = args[i]
+
+def test_independence(k, n, m, rounds, seed=None):
+    if seed:
+        rng = np.random.default_rng(seed=seed)
+    else:
+        rng = np.random.default_rng()
+    hist = np.zeros((m,))
+    seeds = rng.integers(0, 2**32, size=rounds)
+    for i in range(rounds):
+        h = HashFunction(k, n, m, seed=seeds[i])
+        hist[h.eval(0)] += 1
+    return hist / rounds
 
 def get_sample_indices(n, h, j, m):
     """
@@ -96,7 +128,7 @@ class SSparseRecover:
         else:
             rng = np.random.default_rng(seed)
         for i in range(self.r_max):
-            self.hs.append(HashFunction(p, 2, n, m=2*s, seed=rng.integers(0,20000)))
+            self.hs.append(HashFunction(2, n, 2*s, seed=rng.integers(0,20000)))
         self.ps = []
         for i in range(self.r_max):
             self.ps.append([])
@@ -299,13 +331,13 @@ def main():
     #         sampler.update(a)
     # for sample in s:
     #     sample.complete()
-    ROUNDS=10
-    hits = {}
-    hits[-1] = 0
+    ROUNDS=n*100
+    hits = np.zeros((n+1,))
+    hits[n] = 0
     print(f"s = {int(np.log(1/err))}, k = {k}, j_max={j_max}", flush=True)
     for r in range(ROUNDS):
         a_gen = gen_a(ss, n, prob, seed=177)
-        h = HashFunction(p, k, n)
+        h = HashFunction(k, n, n**3)
         #print(f"TESTING HASH FUNCTION round {r}: coefficients: {h.cs}, hashvals: {[h.eval(z) for z in range(n)]}")
         seeds = rng.integers(0, 1000, size=j_max)
         samplers = []
@@ -325,31 +357,19 @@ def main():
                     if low_hash > h.eval(res[l][0]):
                         low_hash = h.eval(res[l][0])
                         low_index = res[l][0]
-                if low_index in hits:
-                    hits[low_index] += 1
-                else:
-                    hits[low_index] = 1
+                hits[low_index] += 1
                 #print(f"Hit in round {r}", flush=True)
                 had_hit = True
                 break
         if had_hit == False:
-            hits[-1] += 1
-    miss_rate = hits[-1] / ROUNDS
+            hits[n] += 1
+    miss_rate = hits[n] / ROUNDS
     print(f"Observed distribution: {hits} (miss rate = {miss_rate:.2f})")
-    real_dist = {}
+    real_dist = np.zeros((n,))
     for i, delta in gen_a(ss, n, prob, seed=177):
-        if i not in real_dist:
-            real_dist[i] = 0
         real_dist[i] += delta
-    s = 0
-    for i in real_dist.keys():
-        if real_dist[i] == 1:
-            s += 1
-    for i in list(real_dist.keys()):
-        if real_dist[i] == 0:
-            del (real_dist[i])
-        else:
-            real_dist[i] = ROUNDS * real_dist[i] / s
+    s = np.sum(real_dist)
+    real_dist = ROUNDS * real_dist / s
     print(f"Expected distribution assuming no misses: {real_dist}")
 
 
