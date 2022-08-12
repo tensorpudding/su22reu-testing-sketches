@@ -9,7 +9,7 @@ class HashFunction:
     This means that for a random hash function onto the set [m], and any set of up to k distinct keys, the probability of a collision is bounded by 1/m^k
     We assume here that k << m, this does not work well at all otherwise.
     """
-    def __init__(self, k, n, m, seed=None):
+    def __init__(self, k, n, m, seed):
         """
         Constructor for hash function.
         k = k for k-wise independence
@@ -19,21 +19,22 @@ class HashFunction:
         """
         # We generate the large modulus that produces our finite field of coefficients.
         # A finite field requires order of a power of a prime
-        # We set p to be the smallest power of 2 larger than m
-        self.p = 2
+        # We set p to be the smallest power of 17 larger than m
+        self.p = 147
         # We consider the possibility that the hash space is either larger or smaller than the space of keys
         # The size of the base field must be larger than either
         x = max(n, m)
         while (self.p < x):
-            self.p *= 2
+            self.p *= 147
+        self.p *= 147
         self.k = k
         self.n = n
         self.m = m
         assert(self.p > self.m)
-        if seed:
-            rng = np.random.default_rng(seed=seed)
-        else:
+        if seed == None:
             rng = np.random.default_rng()
+        else:
+            rng = np.random.default_rng(seed=seed)
         # Here, we generate the random coefficients of our degree k-1 polynomial
         self.cs = rng.integers(0, self.p, size=self.k)
 
@@ -56,9 +57,11 @@ class HashFunction:
             sys.exit(2)
         for i in range(len(self.cs)):
             self.cs[i] = args[i]
+    def __eq__(self, other):
+        return (self.p == other.p and self.k == other.k and self.m == other.m and self.n == other.n and self.cs == other.cs).all()
 
 def test_independence(k, n, m, rounds, seed=None):
-    if seed:
+    if seed == None:
         rng = np.random.default_rng(seed=seed)
     else:
         rng = np.random.default_rng()
@@ -84,15 +87,14 @@ def get_sample_indices(n, h, j, m):
 
 class OneSparseRecover:
     def __init__(self, p, seed=None):
-        if seed:
-            rng = np.random.default_rng(seed)
-        else:
-            rng = np.random.default_rng()
+        self.seed = seed
+        if seed == None:
+            self.seed = np.random.default_rng().integers(3000)
         self.phi = 0
         self.tau = 0
         self.iota = 0
         self.p = p
-        self.z = rng.integers(0, p)
+        self.z = np.random.default_rng(self.seed).integers(0, p)
         self.is_one_sparse = False
 
     def update(self, i, delta):
@@ -103,6 +105,9 @@ class OneSparseRecover:
         else:
             self.tau += delta
         self.tau %= self.p
+        self.set_sparsity()
+    
+    def set_sparsity(self):
         if (self.phi != 0):
             r = (self.iota / self.phi) % (self.p - 1)
             zr = field_power(self.z, r, self.p) % self.p
@@ -110,7 +115,6 @@ class OneSparseRecover:
             self.is_one_sparse = x == self.tau
         else:
             self.is_one_sparse = False
-    
     def recover(self):
         if self.is_one_sparse:
             #print(f"OneSparseRecover: recovered {(int(self.iota / self.phi), self.phi)}")
@@ -118,22 +122,40 @@ class OneSparseRecover:
         else:
             return None
 
+    def __eq__(self, other):
+        return self.p == other.p and self.z == other.z
+
+    def __add__(self, other):
+        assert(self == other)
+        ret = OneSparseRecover(self.p, self.seed)
+        ret.tau = self.tau + other.tau
+        ret.phi = self.phi + other.phi
+        ret.iota = self.iota + other.iota
+        ret.set_sparsity()
+        return ret
+
 class SSparseRecover:
     def __init__(self, s, n, p, err=0.05, seed=None):
         self.s = s
+        self.n = n
+        self.p = p
         self.r_max = int(np.log(s/err))
+        self.err = err
         self.hs = []
-        if seed:
-            rng = np.random.default_rng(seed=seed)
+        if seed == None:
+            self.seed = np.random.default_rng().integers(3000)
         else:
-            rng = np.random.default_rng(seed)
+            self.seed = seed
+        rng = np.random.default_rng(self.seed)
+        h_seeds = rng.integers(3000, size=self.r_max)
         for i in range(self.r_max):
-            self.hs.append(HashFunction(2, n, 2*s, seed=rng.integers(0,20000)))
+            self.hs.append(HashFunction(2, n, 2*s, seed=h_seeds[i]))
         self.ps = []
         for i in range(self.r_max):
             self.ps.append([])
+            seeds = rng.integers(3000, size=2*s)
             for j in range(2*s):
-                self.ps[i].append(OneSparseRecover(p))
+                self.ps[i].append(OneSparseRecover(p, seeds[j]))
     
     def update(self, i, delta):
         for j in range(self.r_max):
@@ -152,6 +174,26 @@ class SSparseRecover:
             return a_prime
         else:
             return None
+
+    def __eq__(self, other):
+        if self.s != other.s or self.r_max != other.r_max:
+            return False
+        for i in range(len(self.hs)):
+            if self.hs[i] != other.hs[i]:
+                return False
+        for i in range(self.r_max):
+            for j in range(2*self.s):
+                if self.ps[i][j] != other.ps[i][j]:
+                    return False
+        return True
+
+    def __add__(self, other):
+        assert(self == other)
+        ret = SSparseRecover(self.s, self.n, self.p, self.err, self.seed)
+        for i in range(self.r_max):
+            for j in range(2*self.s):
+                ret.ps[i][j] = self.ps[i][j] + other.ps[i][j]
+        return ret
 
 def field_power(z, e, p):
     """
@@ -215,6 +257,80 @@ class SimpleSampler:
         except(AssertionError):
             print(f"ASSERTION FAILED: {self.sample} but claims that \"is 1-sparse\" = {self.is_one_sparse}", file=sys.stderr)
         #print(f"z = {self.osr.z}, phi = {self.osr.phi}, tau = {self.osr.tau}, iota = {self.osr.iota}")
+
+class L0Sketch:
+    def __init__(self, n, p, err=0.05, seed=None):
+        if seed == None:
+            self.seed = np.random.default_rng().integers(2000)
+        else:
+            self.seed = seed
+        self.rng = np.random.default_rng(seed=self.seed)
+        self.n = n
+        self.p = p
+        self.err = err
+        self.s = int(np.log(1/err))+1
+        self.k = 2*self.s
+        self.j_max = int(np.log(self.n))
+        self.h = HashFunction(self.k, self.n, self.n ** 3, seed=self.rng.integers(3000))
+        self.levels = []
+        for j in range(self.j_max):
+            self.levels.append(SSparseRecover(self.s, self.n, self.p, self.err, seed=self.rng.integers(3000)))
+    
+    def update(self, i, delta):
+        hi = self.h.eval(i)
+        j = 0
+        while hi < int((self.n ** 3) / (2**j)) and j < self.j_max:
+            self.levels[j].update(i, delta)
+            j+=1
+
+    def recover(self):
+        j = 0
+        while j < self.j_max:
+            got = self.levels[j].recover()
+            if got:
+                return got
+            else:
+                j += 1
+        return None
+    
+    def sample(self):
+        got = self.recover()
+        if got:
+            lowest_index = got[0][0]
+            lowest_hash = self.h.eval(got[0][0])
+            lowest_delta = got[0][1]
+            for j in range(1,len(got)):
+                index, delta = got[j]
+                hash = self.h.eval(index)
+                if hash < lowest_hash:
+                    lowest_hash = hash
+                    lowest_delta = delta
+                    lowest_index = index
+            return (lowest_index, lowest_delta)
+        else:
+            return None
+    
+    def debug_print(self):
+        print(f"L0 sampler: n = {self.n}, s={self.s}, k={self.k}, j_max={self.j_max}, seed={self.seed}")
+        print(f"h: p = {self.h.p}, m = {self.h.m}, cs={self.h.cs} -> {list(self.h.get_hash_vals())}")
+        for j in range(self.j_max):
+            print(f"j = {j}: ")
+            r = 0
+            for h in self.levels[j].hs:
+                print(f"r = {r}, p = {h.p}, cs= {h.cs} -> {list(h.get_hash_vals())}")
+                r += 1
+
+    
+    def __eq__(self, other):
+        return self.seed == other.seed and self.n == other.n and self.p == other.p and self.err == other.err
+
+    def __add__(self, other):
+        assert(self == other)
+        ret = L0Sketch(self.n, self.p, self.err, self.seed)
+        for j in range(len(self.levels)):
+            ret.levels[j] = self.levels[j] + other.levels[j]
+        return ret
+
 
 class SSampler:
     def __init__(self, n, h, p, j, err=0.05, seed=None):
