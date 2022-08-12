@@ -38,7 +38,28 @@ def main():
     a1 = [0,3,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
     a2 = [0,0,0,-1,9,2,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0]
     n = len(a1)
-    ROUNDS=3000
+    a_gen = hashing_families.gen_a(20, n, 0.5, seed=seed)
+    LZs = []
+    NUM_SKETCH=1000
+    for sketch in range(NUM_SKETCH):
+        LZs.append(hashing_families.L0Sketch(n, 333667))
+    for i, delta in a_gen:
+        for sketch in range(NUM_SKETCH):
+            LZs[sketch].update(i, delta)
+    print(f"Samples from random a: ", end="", flush=True)
+    hist = np.zeros((n,))
+    miss = 0
+    for sketch in range(NUM_SKETCH):
+        s = LZs[sketch].sample()
+        if s == None:
+            miss += 1
+        else:
+            hist[s[0]] += 1
+    print(hist)
+    print("")
+    print(f"Failures: {miss} (failure rate = {100*miss/NUM_SKETCH}%)")
+    return
+    ROUNDS=30
     hist_1 = np.zeros((n+1,))
     hist_2 = np.zeros((n+1,))
     hist_3 = np.zeros((n+1,))
