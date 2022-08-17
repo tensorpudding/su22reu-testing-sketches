@@ -20,7 +20,7 @@ def main():
     #edges = [(0,3,1),(1,2,1),(2,3,1),(2,5,1),(4,7,1),(5,6,1),(7,8,1),(7,9,1)]
     
     # Loading graph
-    graph = gt.load_graph('github.gt')
+    graph = gt.load_graph('test.gt')
     graph.set_directed(False)
     graph.ep["s"] = graph.new_edge_property("double", val=0.2)
     # Example code
